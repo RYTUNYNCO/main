@@ -44,11 +44,9 @@ jobs:
           name: sdk-bundle
           path: sdk/
 
-      - name: Deploy docs (Redoc)
-        uses: redocly/github-action@v1
-        with:
-          spec: openapi.yaml
-          output: docs/index.html
+      - name: Build docs (Redocly CLI)
+        run: |
+          npx @redocly/cli build-docs openapi.yaml -o docs/index.html
 
       - name: Publish GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
