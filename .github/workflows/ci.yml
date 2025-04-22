@@ -1,0 +1,80 @@
+name: OAS‑Build‑&‑SDK‑Publish
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          npm i -g @redocly/cli
+          npm i -g openapi-generator-cli
+
+      - name: Build OAS
+        run: |
+          python scripts/parse_html.py collect-html build/raw_meta.json
+          python scripts/build_oas.py build/raw_meta.json openapi.yaml
+
+      - name: Lint spec
+        run: redocly lint openapi.yaml
+
+      - name: Generate SDKs
+        run: |
+          openapi-generator-cli generate -g typescript-axios -i openapi.yaml -o sdk/ts --additional-properties=npmName=@navercommerce/sdk
+          openapi-generator-cli generate -g go -i openapi.yaml -o sdk/go --additional-properties=packageName=navercommerce-sdk,moduleName=github.com/RYTUNYNCO/main
+          openapi-generator-cli generate -g csharp-netcore -i openapi.yaml -o sdk/csharp
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-bundle
+          path: sdk/
+
+      - name: Deploy docs (Redoc)
+        uses: redocly/github-action@v1
+        with:
+          spec: openapi.yaml
+          output: docs/index.html
+
+      - name: Publish GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs
+
+      # ---- 신규: SDK 및 스펙을 main 브랜치로 다시 커밋 ----
+      - name: Commit SDK back to repo
+        if: github.ref == 'refs/heads/main'
+        env:
+          GIT_AUTHOR_NAME: 'ci-bot'
+          GIT_AUTHOR_EMAIL: 'ci@example.com'
+          GIT_COMMITTER_NAME: 'ci-bot'
+          GIT_COMMITTER_EMAIL: 'ci@example.com'
+          PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+        run: |
+          git config --global user.name "${GIT_AUTHOR_NAME}"
+          git config --global user.email "${GIT_AUTHOR_EMAIL}"
+          git checkout main
+          mkdir -p generated
+          mv sdk generated/
+          mv openapi.yaml generated/
+          mv docs generated/
+          mv generated/* .
+          git add sdk openapi.yaml docs
+          git commit -m "chore(ci): auto‑commit generated SDK & docs" || echo "No changes"
+          git push https://$PERSONAL_TOKEN@github.com/RYTUNYNCO/main.git HEAD:main
